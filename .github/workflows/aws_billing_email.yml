@@ -1,0 +1,60 @@
+name: AWS Billing Report via Email (PDF)
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Runs daily at 2 AM UTC
+  workflow_dispatch:  # Allows manual execution
+
+jobs:
+  fetch-billing-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Fetch AWS Billing Data
+        run: |
+          START_DATE=$(date -d '5 days ago' +%Y-%m-%d)
+          END_DATE=$(date +%Y-%m-%d)
+          
+          aws ce get-cost-and-usage \
+            --time-period Start=$START_DATE,End=$END_DATE \
+            --granularity DAILY \
+            --metrics "BlendedCost" "UnblendedCost" \
+            --output json > aws-billing.json
+
+      - name: Convert Billing Data to Text
+        run: |
+          echo "AWS Billing Report (Last 5 Days)" > aws-billing.txt
+          echo "" >> aws-billing.txt
+          jq -r '.ResultsByTime[] | "Date: \(.TimePeriod.Start), Cost: \(.Total.BlendedCost.Amount) USD"' aws-billing.json >> aws-billing.txt
+
+      - name: Install Pandoc & Convert Text to PDF
+        run: |
+          sudo apt update
+          sudo apt install -y pandoc
+          pandoc aws-billing.txt -o aws-billing.pdf
+
+      - name: Send Email with PDF via Gmail
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_PASSWORD }}
+          subject: "AWS Billing Report (Last 5 Days)"
+          body: "Find attached the AWS billing report for the last 5 days."
+          to: "your-email@gmail.com"
+          from: "your-email@gmail.com"
+          attachments: "aws-billing.pdf"
+
+      - name: Cleanup Temporary Files
+        run: rm -f aws-billing.json aws-billing.txt aws-billing.pdf
